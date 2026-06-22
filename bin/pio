@@ -1,0 +1,8 @@
+#!/bin/sh
+# Use the pioarduino-installed PlatformIO (Python 3.11) instead of any
+# system/Homebrew pio. The pioarduino platform-espressif32 fork ships
+# build-script C extensions (littlefs, fatfs) built for the CPython 3.11 ABI,
+# so PlatformIO must run on that same Python.
+#
+# The penv is created by the pioarduino platform on first install.
+exec "$HOME/.platformio/penv/bin/pio" "$@"

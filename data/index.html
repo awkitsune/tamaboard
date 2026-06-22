@@ -1,0 +1,335 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<title>Tamaboard · companion</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: ui-monospace, Menlo, monospace; background: #111; color: #eee;
+         padding: 12px; min-height: 100dvh; display: flex; flex-direction: column; gap: 12px; }
+  h1 { font-size: .9rem; letter-spacing: .2em; opacity: .5; text-transform: uppercase; }
+  #status { font-size: .7rem; opacity: .4; }
+
+  .card { background: #1a1a1a; border-radius: 10px; padding: 14px; }
+  .card h2 { font-size: .7rem; letter-spacing: .15em; opacity: .5;
+             text-transform: uppercase; margin-bottom: 10px; }
+
+  /* Stats */
+  .stat { display: flex; align-items: center; gap: 10px; margin: 6px 0; }
+  .stat-label { width: 60px; font-size: .8rem; opacity: .7; }
+  .bar { flex: 1; height: 8px; background: #333; border-radius: 4px; overflow: hidden; }
+  .bar > div { height: 100%; background: #4f4; transition: width .3s; }
+  .stat-val { width: 32px; text-align: right; font-size: .8rem; opacity: .7; }
+
+  .state-pill { display: inline-block; padding: 3px 10px; border: 1px solid #444;
+                border-radius: 12px; font-size: .75rem; letter-spacing: .1em; }
+  .state-pill.ok   { border-color: #4f4; color: #cfc; }
+  .state-pill.warn { border-color: #fa4; color: #fda; }
+  .state-pill.err  { border-color: #f55; color: #fbb; }
+
+  /* System bar */
+  .sysbar { display: flex; gap: 16px; flex-wrap: wrap; align-items: center; }
+  .sys-item { display: flex; align-items: center; gap: 8px; }
+  .sys-label { font-size: .65rem; letter-spacing: .15em; opacity: .5; }
+  .sys-sub   { font-size: .7rem; opacity: .5; }
+  .sysbar .bar { width: 60px; }
+
+  /* Pill navbar */
+  .tabs { display: flex; gap: 6px; }
+  .tab { padding: 7px 18px; border-radius: 20px; border: 1px solid #333;
+         background: transparent; color: #888; font-family: inherit;
+         font-size: .78rem; cursor: pointer; transition: background .15s, color .15s; }
+  .tab.active  { background: #2a2a2a; color: #eee; border-color: #555; }
+  .tab:hover:not(.active) { color: #bbb; border-color: #444; }
+
+  /* Tab panels */
+  .panel { display: none; flex-direction: column; gap: 12px; }
+  .panel.active { display: flex; }
+
+  /* Slots */
+  .slots { display: flex; flex-direction: column; gap: 6px; }
+  .slot  { display: flex; align-items: center; gap: 10px; padding: 10px;
+           background: #222; border-radius: 8px; cursor: pointer; user-select: none; }
+  .slot .dot { width: 8px; height: 8px; border-radius: 50%; background: #444; flex-shrink: 0; }
+  .slot.bonded    .dot { background: #fa4; }
+  .slot.connected .dot { background: #4f4; }
+  .slot-name { flex: 1; font-size: .85rem; }
+  .slot-tag  { font-size: .65rem; opacity: .5; text-transform: uppercase; letter-spacing: .1em; }
+  .forget { font-size: .65rem; padding: 3px 8px; border: 1px solid #444;
+            background: transparent; color: #aaa; border-radius: 4px; cursor: pointer; }
+
+  /* Pairing PIN banner */
+  .pin-card { display: none; text-align: center; padding: 20px; }
+  body[data-pairing="1"] .pin-card { display: block; }
+  .pin { font-size: 2.5rem; letter-spacing: .15em; font-weight: 700; margin-top: 6px; }
+
+  /* Buttons */
+  .btn-row { display: flex; gap: 6px; }
+  .btn { flex: 1; padding: 12px; border: none; border-radius: 8px;
+         background: #222; color: #eee; font-size: .85rem; cursor: pointer; font-family: inherit; }
+  .btn:active { background: #444; }
+
+  /* Touchpad */
+  #touchpad { height: 200px; background: #222; border-radius: 10px;
+              touch-action: none; position: relative; }
+  #touchpad::after { content: "touchpad"; position: absolute; inset: 0;
+                     display: grid; place-items: center; opacity: .15; font-size: .8rem; }
+
+  /* Keys */
+  .keyrows { display: flex; flex-direction: column; gap: 4px; }
+  .keyrow  { display: flex; gap: 4px; }
+  .key { flex: 1; min-width: 28px; padding: 10px 4px; border: none; border-radius: 5px;
+         background: #222; color: #eee; font-size: .8rem; cursor: pointer; font-family: inherit; }
+  .key:active { background: #444; }
+  .key.wide { flex: 3; }
+  .key.fkey { font-size: .6rem; padding: 10px 1px; min-width: 0; }
+  .key.mod  { background: #1e1e2e; color: #aaf; }
+</style>
+</head>
+<body>
+<h1>Tamaboard · companion</h1>
+<div id="status">connecting…</div>
+
+<!-- System status — always visible -->
+<div class="card sysbar">
+  <div class="sys-item"><span class="sys-label">BATT</span>
+    <div class="bar"><div id="b-batt" style="width:0"></div></div>
+    <span id="v-batt" class="stat-val">—</span></div>
+  <div class="sys-item"><span class="sys-label">BLE</span>
+    <span class="state-pill" id="ble">—</span>
+    <span id="ble-slot" class="sys-sub"></span></div>
+  <div class="sys-item"><span class="sys-label">CLK</span>
+    <span id="clk-status" class="sys-sub">—</span></div>
+</div>
+
+<!-- Pairing PIN — shown while bonding -->
+<div class="card pin-card">
+  <div>Enter on host:</div>
+  <div class="pin" id="pin">——————</div>
+</div>
+
+<!-- Pill navbar -->
+<nav class="tabs">
+  <button class="tab active" id="tab-home" onclick="switchTab('home')">Home</button>
+  <button class="tab"        id="tab-kb"   onclick="switchTab('kb')" style="display:none">Keyboard / Mouse</button>
+</nav>
+
+<!-- Home panel: pet status + BLE hosts -->
+<div class="panel active" id="panel-home">
+  <div class="card">
+    <h2>Pet</h2>
+    <div style="margin-bottom:10px"><span class="state-pill" id="state">—</span></div>
+    <div class="stat"><span class="stat-label">Hunger</span><div class="bar"><div id="b-hunger" style="width:0"></div></div><span class="stat-val" id="v-hunger">0</span></div>
+    <div class="stat"><span class="stat-label">Mood</span>  <div class="bar"><div id="b-mood"   style="width:0"></div></div><span class="stat-val" id="v-mood">0</span></div>
+    <div class="stat"><span class="stat-label">Energy</span><div class="bar"><div id="b-energy" style="width:0"></div></div><span class="stat-val" id="v-energy">0</span></div>
+    <div class="btn-row" style="margin-top:10px">
+      <button class="btn" onclick="action('EAT')">Feed</button>
+      <button class="btn" onclick="action('PLAY')">Play</button>
+      <button class="btn" onclick="action('SLEEP')">Sleep</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Bluetooth hosts</h2>
+    <div class="slots" id="slots"></div>
+    <div class="btn-row" style="margin-top:10px">
+      <button class="btn" onclick="action('KEYBOARD')">Enter keyboard mode</button>
+    </div>
+  </div>
+</div>
+
+<!-- Keyboard / Mouse panel -->
+<div class="panel" id="panel-kb">
+  <div class="card">
+    <h2>Touchpad</h2>
+    <div id="touchpad"></div>
+    <div class="btn-row" style="margin-top:8px">
+      <button class="btn" onpointerdown="mouseClick(1)" onpointerup="mouseClick(0)" onpointercancel="mouseClick(0)">Left</button>
+      <button class="btn" onpointerdown="mouseClick(2)" onpointerup="mouseClick(0)" onpointercancel="mouseClick(0)">Right</button>
+    </div>
+  </div>
+  <div class="card">
+    <h2>Keyboard</h2>
+    <div class="keyrows">
+      <div class="keyrow" id="row-fn"></div>
+      <div class="keyrow" id="row-num"></div>
+      <div class="keyrow" id="row-qwerty"></div>
+      <div class="keyrow" id="row-asdf"></div>
+      <div class="keyrow" id="row-zxcv"></div>
+      <div class="keyrow">
+        <button class="key"      onpointerdown="sendKey(0x2B,true)" onpointerup="sendKey(0x2B,false)">Tab</button>
+        <button class="key wide" onpointerdown="sendKey(0x2C,true)" onpointerup="sendKey(0x2C,false)">Space</button>
+        <button class="key"      onpointerdown="sendKey(0x28,true)" onpointerup="sendKey(0x28,false)">↵</button>
+        <button class="key"      onpointerdown="sendKey(0x2A,true)" onpointerup="sendKey(0x2A,false)">⌫</button>
+      </div>
+      <div class="keyrow">
+        <button class="key mod" onpointerdown="sendKey(0xE1,true)" onpointerup="sendKey(0xE1,false)">⇧</button>
+        <button class="key mod" onpointerdown="sendKey(0xE0,true)" onpointerup="sendKey(0xE0,false)">Ctrl</button>
+        <button class="key mod" onpointerdown="sendKey(0xE2,true)" onpointerup="sendKey(0xE2,false)">⌥</button>
+        <button class="key mod" onpointerdown="sendKey(0xE3,true)" onpointerup="sendKey(0xE3,false)">⌘</button>
+        <button class="key" onpointerdown="sendKey(0x50,true)" onpointerup="sendKey(0x50,false)">←</button>
+        <button class="key" onpointerdown="sendKey(0x52,true)" onpointerup="sendKey(0x52,false)">↑</button>
+        <button class="key" onpointerdown="sendKey(0x51,true)" onpointerup="sendKey(0x51,false)">↓</button>
+        <button class="key" onpointerdown="sendKey(0x4F,true)" onpointerup="sendKey(0x4F,false)">→</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+// USB HID keycodes
+const KEYS = {
+  '1':0x1E,'2':0x1F,'3':0x20,'4':0x21,'5':0x22,'6':0x23,'7':0x24,'8':0x25,'9':0x26,'0':0x27,
+  'Q':0x14,'W':0x1A,'E':0x08,'R':0x15,'T':0x17,'Y':0x1C,'U':0x18,'I':0x0C,'O':0x12,'P':0x13,
+  'A':0x04,'S':0x16,'D':0x07,'F':0x09,'G':0x0A,'H':0x0B,'J':0x0D,'K':0x0E,'L':0x0F,
+  'Z':0x1D,'X':0x1B,'C':0x06,'V':0x19,'B':0x05,'N':0x11,'M':0x10,
+};
+function buildKeyRow(id, chars) {
+  const row = document.getElementById(id);
+  chars.split('').forEach(ch => {
+    const btn = document.createElement('button');
+    btn.className = 'key';
+    btn.textContent = ch;
+    btn.addEventListener('pointerdown', () => sendKey(KEYS[ch], true));
+    btn.addEventListener('pointerup',   () => sendKey(KEYS[ch], false));
+    row.appendChild(btn);
+  });
+}
+function buildFnRow(id) {
+  const row = document.getElementById(id);
+  for (let i = 1; i <= 12; i++) {
+    const btn = document.createElement('button');
+    btn.className = 'key fkey';
+    btn.textContent = 'F' + i;
+    const code = 0x3A + (i - 1);
+    btn.addEventListener('pointerdown', () => sendKey(code, true));
+    btn.addEventListener('pointerup',   () => sendKey(code, false));
+    row.appendChild(btn);
+  }
+}
+buildFnRow('row-fn');
+buildKeyRow('row-num',    '1234567890');
+buildKeyRow('row-qwerty', 'QWERTYUIOP');
+buildKeyRow('row-asdf',   'ASDFGHJKL');
+buildKeyRow('row-zxcv',   'ZXCVBNM');
+
+// ── Tab navigation ──
+let activeTab = 'home';
+let kbTabVisible = false;
+
+function switchTab(name) {
+  activeTab = name;
+  document.getElementById('panel-home').classList.toggle('active', name === 'home');
+  document.getElementById('panel-kb').classList.toggle('active',   name === 'kb');
+  document.getElementById('tab-home').classList.toggle('active',   name === 'home');
+  document.getElementById('tab-kb').classList.toggle('active',     name === 'kb');
+}
+
+function setKbTabVisible(visible) {
+  if (visible === kbTabVisible) return;
+  kbTabVisible = visible;
+  document.getElementById('tab-kb').style.display = visible ? '' : 'none';
+  if (visible && activeTab !== 'kb') switchTab('kb');   // auto-switch in
+  if (!visible && activeTab === 'kb') switchTab('home'); // auto-switch out
+}
+
+// ── WebSocket: the only transport ──
+let ws;
+function wsConnect() {
+  ws = new WebSocket('ws://' + location.host + '/ws');
+  ws.onopen    = () => { setStatus('connected'); syncClock(); };
+  ws.onclose   = () => { setStatus('disconnected'); setTimeout(wsConnect, 2000); };
+  ws.onerror   = () => ws.close();
+  ws.onmessage = e  => onPush(JSON.parse(e.data));
+}
+function send(obj) { if (ws && ws.readyState === 1) ws.send(JSON.stringify(obj)); }
+
+// ── Client → server commands ──
+function action(state)       { send({ t: 'action', state }); }
+function slotCmd(i, action)  { send({ t: 'slot', i, action }); }
+function syncClock() {
+  const now = new Date();
+  send({ t: 'clock', local_seconds: now.getHours()*3600 + now.getMinutes()*60 + now.getSeconds() });
+}
+function sendKey(code, down) { send({ t: 'key', code, down }); }
+function mouseClick(btn)     { send({ t: 'click', btn }); }
+function mouseMove(dx, dy)   { send({ t: 'move', dx, dy }); }
+
+// ── Server → client pushes ──
+function onPush(msg) {
+  if (msg.t === 'state')   renderState(msg);
+  if (msg.t === 'slots')   renderSlots(msg);
+  if (msg.t === 'pairing') renderPairing(msg);
+}
+
+function renderState(s) {
+  document.body.dataset.state = s.state;
+  document.getElementById('state').textContent = s.state;
+  for (const k of ['hunger', 'mood', 'energy']) {
+    document.getElementById('b-' + k).style.width = s[k] + '%';
+    document.getElementById('v-' + k).textContent = s[k];
+  }
+  document.getElementById('b-batt').style.width = s.battery + '%';
+  document.getElementById('v-batt').textContent = s.battery + '%';
+  const ble = document.getElementById('ble');
+  ble.textContent = s.ble;
+  ble.className = 'state-pill ' +
+    (s.ble === 'CONNECTED' ? 'ok' :
+     s.ble === 'PAIRING'   ? 'warn' :
+     s.ble === 'FAILED'    ? 'err'  : '');
+  document.getElementById('ble-slot').textContent = s.ble_slot_name || '';
+  document.getElementById('clk-status').textContent = s.clock_synced ? 'synced' : 'not synced';
+
+  setKbTabVisible(s.state === 'KEYBOARD' && s.ble === 'CONNECTED');
+}
+
+function renderSlots(data) {
+  const container = document.getElementById('slots');
+  container.innerHTML = '';
+  data.slots.forEach((sl, i) => {
+    const div = document.createElement('div');
+    div.className = 'slot' + (sl.connected ? ' connected' : sl.bonded ? ' bonded' : '');
+    const dot  = document.createElement('span'); dot.className  = 'dot';
+    const name = document.createElement('span'); name.className = 'slot-name'; name.textContent = sl.name;
+    const tag  = document.createElement('span'); tag.className  = 'slot-tag';
+    tag.textContent = sl.connected ? 'active' : sl.bonded ? 'bonded' : 'empty';
+    div.append(dot, name, tag);
+    if (sl.bonded) {
+      const fbtn = document.createElement('button');
+      fbtn.className = 'forget'; fbtn.textContent = 'Forget';
+      fbtn.addEventListener('click', e => { e.stopPropagation(); slotCmd(i, 'forget'); });
+      div.appendChild(fbtn);
+    }
+    div.addEventListener('click', () => slotCmd(i, sl.bonded ? 'select' : 'pair'));
+    container.appendChild(div);
+  });
+}
+
+function renderPairing(msg) {
+  document.body.dataset.pairing = msg.passkey > 0 ? '1' : '0';
+  if (msg.passkey > 0)
+    document.getElementById('pin').textContent = String(msg.passkey).padStart(6, '0');
+}
+
+// ── Touchpad ──
+let lastTouch = null;
+const tp = document.getElementById('touchpad');
+tp.addEventListener('pointerdown', e => { tp.setPointerCapture(e.pointerId); lastTouch = {x: e.clientX, y: e.clientY}; });
+tp.addEventListener('pointermove', e => {
+  if (!lastTouch) return;
+  const dx = Math.round(e.clientX - lastTouch.x);
+  const dy = Math.round(e.clientY - lastTouch.y);
+  if (dx || dy) mouseMove(dx, dy);
+  lastTouch = {x: e.clientX, y: e.clientY};
+});
+tp.addEventListener('pointerup',     () => lastTouch = null);
+tp.addEventListener('pointercancel', () => lastTouch = null);
+
+function setStatus(s) { document.getElementById('status').textContent = s; }
+
+setInterval(syncClock, 3600 * 1000);
+wsConnect();
+</script>
+</body>
+</html>

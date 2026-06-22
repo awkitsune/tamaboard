@@ -1,0 +1,33 @@
+#!/bin/sh
+# Flash firmware and (optionally) the LittleFS data partition.
+#
+# Why a wrapper: pioarduino's build script disables LDF whenever any FS target
+# is in the command line (uploadfs / buildfs / erase). Chaining `-t upload
+# -t uploadfs` in one invocation breaks dep resolution for the firmware
+# compile. We run them as separate invocations instead.
+#
+# Usage:
+#   bin/flash            # firmware only
+#   bin/flash --fs       # firmware + web UI
+#   bin/flash --fs-only  # web UI only
+
+set -e
+HERE="$(cd "$(dirname "$0")" && pwd)"
+PIO="$HERE/pio"
+
+case "${1-}" in
+    --fs-only)
+        exec "$PIO" run -t uploadfs
+        ;;
+    --fs)
+        "$PIO" run -t upload
+        exec "$PIO" run -t uploadfs
+        ;;
+    "")
+        exec "$PIO" run -t upload
+        ;;
+    *)
+        echo "usage: $0 [--fs|--fs-only]" >&2
+        exit 64
+        ;;
+esac
