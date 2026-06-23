@@ -18,4 +18,8 @@ struct Page {
     // Called by PageStack when this page is the current root and the user
     // long-presses. Return true to suppress the default "enter page" behavior.
     virtual bool interceptsRootLongPress(PageStack&) { return false; }
+
+    // How often (ms) PageStack should auto-refresh this page when idle.
+    // 0 = only refresh on explicit requestRender() calls.
+    virtual uint32_t autoRefreshMs() const { return 0; }
 };

@@ -25,6 +25,10 @@ public:
     void requestRender() { _dirty = true; }
     void renderIfDirty();
 
+    // Call from loop() — triggers a render if the current page's autoRefreshMs()
+    // (or the global 30 s clock tick, whichever fires first) has elapsed.
+    void checkAutoRefresh();
+
     Page* currentPage() const;
     bool  entered() const { return _entered || _modal; }
 
@@ -34,5 +38,7 @@ private:
     int                 _rootIdx = 0;
     bool                _entered = false;
     Page*               _modal   = nullptr;
-    bool                _dirty   = true;
+    bool                _dirty            = true;
+    uint32_t            _globalRefreshMs  = 30000; // clock header ticks for all pages
+    uint32_t            _lastRenderMs     = 0;
 };

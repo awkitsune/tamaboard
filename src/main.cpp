@@ -47,9 +47,7 @@ static PairingPage pairing;
 
 static uint32_t lastTick = 0;
 static int saveTick = 0;
-static uint32_t lastClockRefresh = 0;
 static uint32_t lastBatterySample = 0;
-static uint32_t lastHomeRender = 0;
 
 static const char *stateName(State s)
 {
@@ -161,10 +159,8 @@ static void onFsmStateChange(State s)
         esp_light_sleep_start();
         // Swallow the wakeup button press before _taskFn can turn it into a nav event.
         button.suppressNextEvent();
-        // Awake. Reset home-render timer so it doesn't fire instantly.
         uint32_t sleptMs = millis() - sleepStart;
         Serial.printf("[sleep] waking up... slept %lu ms\n", (unsigned long)sleptMs);
-        lastHomeRender = millis();
         fsm.recoverFromSleep(sleptMs, TICK_INTERVAL_MS);
         // ADC2 usable now (WiFi still off) — grab a fresh battery reading.
         Battery::sample();
@@ -325,26 +321,13 @@ void loop()
             petStore.save(fsm.pet(), fsm.state());
         }
     }
-    if (millis() - lastClockRefresh >= 30000)
-    {
-        lastClockRefresh = millis();
-        pageStackPtr->requestRender();
-    }
     if (millis() - lastBatterySample >= 60000)
     {
         lastBatterySample = millis();
         Battery::sample();
         broadcasterPtr->pushState();
     }
-    if (millis() - lastHomeRender >= 5000)
-    {
-        lastHomeRender = millis();
-        if (fsm.state() != State::SLEEP && strcmp(pageStackPtr->currentPage()->title(), "HOME") == 0)
-        {
-            pageStackPtr->requestRender();
-        }
-    }
-
+    pageStackPtr->checkAutoRefresh();
     pageStackPtr->renderIfDirty();
     delay(20);
 }

@@ -106,6 +106,25 @@ void PageStack::renderIfDirty()
         int yTop = drawHeader(c, page->title(), entered());
         page->render(c, yTop + 1);
     });
+    _lastRenderMs = millis();
 
     Serial.println("[PageStack] rendered dirty page");
+}
+
+void PageStack::checkAutoRefresh()
+{
+    if (_dirty)
+        return;
+    Page *p = currentPage();
+    if (!p)
+        return;
+    uint32_t pageMs = p->autoRefreshMs();
+    // Pick whichever interval fires first; 0 means "no constraint from that source".
+    uint32_t best;
+    if (pageMs > 0 && (_globalRefreshMs == 0 || pageMs < _globalRefreshMs))
+        best = pageMs;
+    else
+        best = _globalRefreshMs;
+    if (best > 0 && millis() - _lastRenderMs >= best)
+        requestRender();
 }

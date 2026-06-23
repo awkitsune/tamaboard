@@ -11,6 +11,7 @@ public:
     void onShortPress(PageStack& nav) override;
     void onLongPress(PageStack& nav) override;
     bool interceptsRootLongPress(PageStack& nav) override;
+    uint32_t autoRefreshMs() const override { return 5000; }
 
 private:
     AppContext& _ctx;
