@@ -18,8 +18,8 @@ const uint8_t ICON_LOCK[ICON_LOCK_H] = {
     0b01000010,
     0b01000010,
     0b11111111,
-    0b11011011,
-    0b11011011,
+    0b11100111,
+    0b11101111,
     0b11111111,
     0b00000000,
 };
@@ -37,12 +37,12 @@ const uint8_t ICON_HEART[ICON_HEART_H] = {
 
 // Top-down airplane: fuselage at center, wide wings at row 2, narrow tail at row 5.
 const uint8_t ICON_AIRPLANE[ICON_AIRPLANE_H] = {
-    0b00011000,  // nose tip
-    0b00011000,  // nose
-    0b01111110,  // wings
-    0b00011000,  // body
-    0b00011000,  // body
-    0b00111100,  // horizontal stabilizer
-    0b00011000,  // tail
+    0b00001000,
+    0b00001100,
+    0b11001100,
+    0b01111111,
+    0b00001100,
+    0b00001100,
+    0b00001000,
     0b00000000,
 };

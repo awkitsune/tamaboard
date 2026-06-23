@@ -33,8 +33,10 @@ public:
     // Radio power — disables WiFi+BLE when true, restores AP when false.
     // BLE does NOT auto-restart on disable=false; use Keyboard page for that.
     void setAirplaneMode(bool enable);
+    bool isAirplaneMode() const { return _airplaneMode; }
 
 private:
+    bool _airplaneMode = false;
     PetFSM&      _fsm;
     BleHid&      _ble;
     DeviceSlots& _slots;

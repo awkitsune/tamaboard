@@ -50,6 +50,7 @@ void Controller::hidInput(const InputEvent& e) {
 }
 
 void Controller::setAirplaneMode(bool enable) {
+    _airplaneMode = enable;
     if (enable) {
         if (_ble.isActive()) _ble.end();
         WiFi.mode(WIFI_OFF);

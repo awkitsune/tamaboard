@@ -3,7 +3,6 @@
 #include <ESPmDNS.h>
 #include <LittleFS.h>
 #include "esp_sleep.h"
-#include "esp_task_wdt.h"
 
 #include "Input.h"
 #include "AppContext.h"
@@ -150,12 +149,18 @@ static void onFsmStateChange(State s)
         if (bleHid.isActive())
             bleHid.end();
         WiFi.mode(WIFI_OFF);
-        // Commit the full-refresh sleep frame now, while the display is powered.
+        // WiFi.mode() yields internally — loopTask may have consumed _dirty by now.
+        // Re-mark dirty immediately before renderIfDirty() so there is no yield
+        // opportunity between the two calls and loopTask cannot steal this render.
+        pageStackPtr->requestRender();
         pageStackPtr->renderIfDirty();
         petStore.save(fsm.pet(), State::SLEEP);
         Serial.println("[sleep] sleeping...");
         uint32_t sleepStart = millis();
+        disableLoopWDT();
         esp_light_sleep_start();
+        // Swallow the wakeup button press before _taskFn can turn it into a nav event.
+        button.suppressNextEvent();
         // Awake. Reset home-render timer so it doesn't fire instantly.
         uint32_t sleptMs = millis() - sleepStart;
         Serial.printf("[sleep] waking up... slept %lu ms\n", (unsigned long)sleptMs);
@@ -163,14 +168,21 @@ static void onFsmStateChange(State s)
         fsm.recoverFromSleep(sleptMs, TICK_INTERVAL_MS);
         // ADC2 usable now (WiFi still off) — grab a fresh battery reading.
         Battery::sample();
-        WiFi.mode(WIFI_AP);
-        WiFi.softAP(AP_SSID, AP_PASS);
-        WiFi.setTxPower(WIFI_POWER_8_5dBm);
-        // IDF keeps existing service registrations across sleep; begin() re-attaches
-        // the daemon without clearing them, so addService() would fail here.
-        MDNS.begin("tamaboard");
-        Serial.println("[sleep] WiFi restored, transitioning to IDLE");
+        if (!controllerPtr->isAirplaneMode()) {
+            WiFi.mode(WIFI_AP);
+            WiFi.softAP(AP_SSID, AP_PASS);
+            WiFi.setTxPower(WIFI_POWER_8_5dBm);
+            // IDF keeps existing service registrations across sleep; begin() re-attaches
+            // the daemon without clearing them, so addService() would fail here.
+            MDNS.begin("tamaboard");
+            Serial.println("[sleep] WiFi restored");
+        } else {
+            Serial.println("[sleep] airplane mode active — WiFi stays off");
+        }
+        Serial.println("[sleep] transitioning to IDLE");
         controllerPtr->transitionState(State::IDLE);
+        petStore.save(fsm.pet(), State::IDLE); // persist IDLE immediately so a crash here doesn't reboot into SLEEP
+        enableLoopWDT(); // re-subscribe after all slow wake ops complete
     }
 }
 
@@ -178,7 +190,6 @@ void setup()
 {
     Serial.begin(115200);
     delay(200); // give monitor time to attach
-    esp_task_wdt_deinit(); // loopTask blocks intentionally during light sleep; TWDT adds no value here
     Serial.println("[main] boot");
 
     // SX1262 LoRa: never initialized — left in reset to save power.
@@ -220,6 +231,7 @@ void setup()
     button.enableWake();
     button.onEvent([](ButtonEvent ev)
                    {
+        // TODO step 4: pageStackPtr->activityBump() here (screen-pause reset)
         if (ev == ButtonEvent::SHORT_PRESS) pageStackPtr->onShortPress();
         else                                pageStackPtr->onLongPress(); });
 
@@ -303,8 +315,6 @@ void setup()
 
 void loop()
 {
-    button.poll();
-
     if (millis() - lastTick >= TICK_INTERVAL_MS)
     {
         lastTick = millis();

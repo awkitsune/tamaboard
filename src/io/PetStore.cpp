@@ -9,9 +9,10 @@ void PetStore::begin() {
     _pet.mood   = prefs.getUChar("mood",   50);
     _pet.energy = prefs.getUChar("energy", 100);
     uint8_t raw = prefs.getUChar("state", (uint8_t)State::IDLE);
-    // Only IDLE and SLEEP survive reboot; transient activity states reset to IDLE.
+    // All non-IDLE states reset to IDLE on reboot — SLEEP especially must not
+    // persist across a physical reset (user explicitly powered off or crashed).
     State s = static_cast<State>(raw);
-    _state = (s == State::IDLE || s == State::SLEEP) ? s : State::IDLE;
+    _state = (s == State::IDLE) ? s : State::IDLE;
     prefs.end();
 }
 
