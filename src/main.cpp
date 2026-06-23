@@ -3,6 +3,7 @@
 #include <ESPmDNS.h>
 #include <LittleFS.h>
 #include "esp_sleep.h"
+#include "esp_task_wdt.h"
 
 #include "Input.h"
 #include "AppContext.h"
@@ -46,46 +47,73 @@ static StateBroadcaster *broadcasterPtr = nullptr;
 static PairingPage pairing;
 
 static uint32_t lastTick = 0;
-static int      saveTick = 0;
+static int saveTick = 0;
 static uint32_t lastClockRefresh = 0;
 static uint32_t lastBatterySample = 0;
 static uint32_t lastHomeRender = 0;
 
-static const char* stateName(State s) {
-    switch (s) {
-        case State::IDLE:     return "IDLE";
-        case State::SLEEP:    return "SLEEP";
-        case State::EAT:      return "EAT";
-        case State::PLAY:     return "PLAY";
-        case State::KEYBOARD: return "KEYBOARD";
+static const char *stateName(State s)
+{
+    switch (s)
+    {
+    case State::IDLE:
+        return "IDLE";
+    case State::SLEEP:
+        return "SLEEP";
+    case State::EAT:
+        return "EAT";
+    case State::PLAY:
+        return "PLAY";
+    case State::KEYBOARD:
+        return "KEYBOARD";
     }
     return "?";
 }
 
-static const char* bleStatusName(BleHidStatus s) {
-    switch (s) {
-        case BleHidStatus::IDLE:        return "IDLE";
-        case BleHidStatus::ADVERTISING: return "ADVERTISING";
-        case BleHidStatus::PAIRING:     return "PAIRING";
-        case BleHidStatus::CONNECTED:   return "CONNECTED";
-        case BleHidStatus::FAILED:      return "FAILED";
+static const char *bleStatusName(BleHidStatus s)
+{
+    switch (s)
+    {
+    case BleHidStatus::IDLE:
+        return "IDLE";
+    case BleHidStatus::ADVERTISING:
+        return "ADVERTISING";
+    case BleHidStatus::PAIRING:
+        return "PAIRING";
+    case BleHidStatus::CONNECTED:
+        return "CONNECTED";
+    case BleHidStatus::FAILED:
+        return "FAILED";
     }
     return "?";
 }
 
-static const char* resetReasonName() {
-    switch (esp_reset_reason()) {
-        case ESP_RST_POWERON:   return "Power-on";
-        case ESP_RST_EXT:       return "External pin";
-        case ESP_RST_SW:        return "Software";
-        case ESP_RST_PANIC:     return "Panic/crash";
-        case ESP_RST_INT_WDT:   return "Interrupt WDT";
-        case ESP_RST_TASK_WDT:  return "Task WDT";
-        case ESP_RST_WDT:       return "Other WDT";
-        case ESP_RST_DEEPSLEEP: return "Deep sleep wake";
-        case ESP_RST_BROWNOUT:  return "Brownout";
-        case ESP_RST_SDIO:      return "SDIO";
-        default:                return "Unknown";
+static const char *resetReasonName()
+{
+    switch (esp_reset_reason())
+    {
+    case ESP_RST_POWERON:
+        return "Power-on";
+    case ESP_RST_EXT:
+        return "External pin";
+    case ESP_RST_SW:
+        return "Software";
+    case ESP_RST_PANIC:
+        return "Panic/crash";
+    case ESP_RST_INT_WDT:
+        return "Interrupt WDT";
+    case ESP_RST_TASK_WDT:
+        return "Task WDT";
+    case ESP_RST_WDT:
+        return "Other WDT";
+    case ESP_RST_DEEPSLEEP:
+        return "Deep sleep wake";
+    case ESP_RST_BROWNOUT:
+        return "Brownout";
+    case ESP_RST_SDIO:
+        return "SDIO";
+    default:
+        return "Unknown";
     }
 }
 
@@ -118,14 +146,17 @@ static void onFsmStateChange(State s)
         // Nav to Home root first so the sleep face always renders clean.
         pageStackPtr->goHome();
         // Tear down radios before rendering (cleaner timing, no BLE traffic during refresh).
-        if (bleHid.isActive()) bleHid.end();
+        if (bleHid.isActive())
+            bleHid.end();
         WiFi.mode(WIFI_OFF);
         // Commit the full-refresh sleep frame now, while the display is powered.
         pageStackPtr->renderIfDirty();
         petStore.save(fsm.pet(), State::SLEEP);
         Serial.println("[sleep] sleeping...");
         uint32_t sleepStart = millis();
+        esp_task_wdt_delete(NULL);
         esp_light_sleep_start();
+        esp_task_wdt_add(NULL);
         // Awake. Reset home-render timer so it doesn't fire instantly.
         uint32_t sleptMs = millis() - sleepStart;
         Serial.printf("[sleep] waking up... slept %lu ms\n", (unsigned long)sleptMs);
@@ -213,7 +244,8 @@ void setup()
     Serial.printf("[main] AP: %s  IP: %s  mDNS: tamaboard.local\n",
                   AP_SSID, WiFi.softAPIP().toString().c_str());
 
-    webUI.setDebugProvider([&]() -> String {
+    webUI.setDebugProvider([&]() -> String
+                           {
         uint32_t up = millis() / 1000;
         uint32_t h  = up / 3600, m = (up % 3600) / 60, s = up % 60;
         const Pet& p = fsm.pet();
@@ -256,8 +288,7 @@ void setup()
             bleStatusName(bleHid.status()),
             (unsigned)slots.active()
         );
-        return String(buf);
-    });
+        return String(buf); });
 
     Serial.println("[main] WebUI begin...");
     webUI.begin(controller, broadcaster);
@@ -278,7 +309,8 @@ void loop()
     {
         lastTick = millis();
         fsm.tick();
-        if (++saveTick >= 60) {
+        if (++saveTick >= 60)
+        {
             saveTick = 0;
             petStore.save(fsm.pet(), fsm.state());
         }
@@ -297,8 +329,7 @@ void loop()
     if (millis() - lastHomeRender >= 5000)
     {
         lastHomeRender = millis();
-        if (fsm.state() != State::SLEEP
-            && strcmp(pageStackPtr->currentPage()->title(), "HOME") == 0)
+        if (fsm.state() != State::SLEEP && strcmp(pageStackPtr->currentPage()->title(), "HOME") == 0)
         {
             pageStackPtr->requestRender();
         }
