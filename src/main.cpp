@@ -135,6 +135,7 @@ static void onFsmStateChange(State s)
 
     prev = s;
     headerSetLocked(s == State::SLEEP);
+    headerSetSleeping(s == State::SLEEP);
 
     if (broadcasterPtr)
         broadcasterPtr->pushState();
@@ -154,9 +155,7 @@ static void onFsmStateChange(State s)
         petStore.save(fsm.pet(), State::SLEEP);
         Serial.println("[sleep] sleeping...");
         uint32_t sleepStart = millis();
-        esp_task_wdt_delete(NULL);
         esp_light_sleep_start();
-        esp_task_wdt_add(NULL);
         // Awake. Reset home-render timer so it doesn't fire instantly.
         uint32_t sleptMs = millis() - sleepStart;
         Serial.printf("[sleep] waking up... slept %lu ms\n", (unsigned long)sleptMs);
@@ -179,6 +178,7 @@ void setup()
 {
     Serial.begin(115200);
     delay(200); // give monitor time to attach
+    esp_task_wdt_deinit(); // loopTask blocks intentionally during light sleep; TWDT adds no value here
     Serial.println("[main] boot");
 
     // SX1262 LoRa: never initialized — left in reset to save power.
