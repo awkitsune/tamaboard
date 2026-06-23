@@ -46,7 +46,6 @@ void Button::_taskFn(void* arg) {
             pressing = false;
             if (s_suppress) {
                 s_suppress = false;
-                Serial.println("[button] wakeup press suppressed");
             } else if (self->_callback) {
                 self->_callback(held >= LONG_PRESS_MS ? ButtonEvent::LONG_PRESS
                                                       : ButtonEvent::SHORT_PRESS);

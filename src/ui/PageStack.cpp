@@ -123,8 +123,6 @@ void PageStack::renderIfDirty()
         page->render(c, yTop + 1);
     });
     _lastRenderMs = millis();
-
-    Serial.println("[PageStack] rendered dirty page");
 }
 
 void PageStack::checkAutoRefresh()

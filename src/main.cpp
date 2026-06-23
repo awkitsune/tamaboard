@@ -130,19 +130,13 @@ void setup()
 
     // SX1262 LoRa: never initialized — left in reset to save power.
 
-    Serial.println("[main] mounting LittleFS...");
     if (!LittleFS.begin(true))
         Serial.println("[main] LittleFS mount failed");
 
-    Serial.println("[main] loading slots...");
     slots.begin();
-    Serial.println("[main] loading pet state...");
     petStore.begin();
-    Serial.println("[main] battery init...");
     Battery::begin();
-    Serial.println("[main] display init...");
     display.begin();
-    Serial.println("[main] display ok");
 
     static PageStack stack(display);
     pageStackPtr = &stack;
@@ -162,7 +156,6 @@ void setup()
     stack.addRoot(&keyboard);
     stack.addRoot(&settings);
 
-    Serial.println("[main] button init...");
     button.begin();
     button.enableWake();
     button.onEvent([](ButtonEvent ev)
@@ -183,7 +176,6 @@ void setup()
         else         pageStackPtr->pushModal(&pairing);
         if (broadcasterPtr) broadcasterPtr->pushPairing(pk); });
 
-    Serial.println("[main] WiFi softAP...");
     WiFi.softAP(AP_SSID, AP_PASS);
     WiFi.setTxPower(WIFI_POWER_8_5dBm);
     MDNS.begin("tamaboard");
@@ -200,12 +192,8 @@ void setup()
     static BatteryRoutine batteryRoutine(broadcaster);
     routines.add(&batteryRoutine);
 
-    Serial.println("[main] WebUI begin...");
     webUI.begin(controller, broadcaster);
-
-    Serial.println("[main] FSM begin...");
     fsm.begin(petStore.pet(), petStore.state());
-    Serial.println("[main] first render...");
     pageStackPtr->renderIfDirty();
     Serial.println("[main] setup complete");
     lastTick = millis();
