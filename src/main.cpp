@@ -132,7 +132,7 @@ static void onFsmStateChange(State s)
 
     prev = s;
     headerSetLocked(s == State::SLEEP);
-    headerSetSleeping(s == State::SLEEP);
+    headerSetCustomText(s == State::SLEEP ? "SLEEP" : nullptr);
 
     if (broadcasterPtr)
         broadcasterPtr->pushState();
@@ -159,6 +159,8 @@ static void onFsmStateChange(State s)
         esp_light_sleep_start();
         // Swallow the wakeup button press before _taskFn can turn it into a nav event.
         button.suppressNextEvent();
+        // Wake-based full refresh: e-ink holds the sleep face; clear artifacts cleanly.
+        pageStackPtr->markFullRefresh();
         uint32_t sleptMs = millis() - sleepStart;
         Serial.printf("[sleep] waking up... slept %lu ms\n", (unsigned long)sleptMs);
         fsm.recoverFromSleep(sleptMs, TICK_INTERVAL_MS);
@@ -227,7 +229,6 @@ void setup()
     button.enableWake();
     button.onEvent([](ButtonEvent ev)
                    {
-        // TODO step 4: pageStackPtr->activityBump() here (screen-pause reset)
         if (ev == ButtonEvent::SHORT_PRESS) pageStackPtr->onShortPress();
         else                                pageStackPtr->onLongPress(); });
 
@@ -298,6 +299,8 @@ void setup()
         );
         return String(buf); });
 
+    pageStackPtr->setPauseTimeout(30000); // pause e-ink after 30 s idle
+
     Serial.println("[main] WebUI begin...");
     webUI.begin(controller, broadcaster);
 
@@ -327,6 +330,14 @@ void loop()
         Battery::sample();
         broadcasterPtr->pushState();
     }
+    // Auto-pause: stop e-ink updates after idle timeout.
+    if (pageStackPtr->pauseTimeoutMs() > 0
+        && !pageStackPtr->isScreenPaused()
+        && millis() - pageStackPtr->lastActivityMs() >= pageStackPtr->pauseTimeoutMs())
+    {
+        pageStackPtr->setScreenPaused(true);
+    }
+
     pageStackPtr->checkAutoRefresh();
     pageStackPtr->renderIfDirty();
     delay(20);

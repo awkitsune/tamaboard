@@ -13,6 +13,16 @@ Page *PageStack::currentPage() const
 
 void PageStack::onShortPress()
 {
+    if (_suppressNextInput)
+    {
+        _suppressNextInput = false;
+        return; // silently drop this input
+    }
+
+    bool wasPaused = _screenPaused;
+    activityBump();
+    if (wasPaused) return; // first press just unpauses, does not navigate
+
     if (_modal || _entered)
     {
         if (auto *p = currentPage())
@@ -21,13 +31,22 @@ void PageStack::onShortPress()
     else if (!_roots.empty())
     {
         _rootIdx = (_rootIdx + 1) % _roots.size();
-        _display.markFullRefresh(); // root carousel: hard transition
         _dirty = true;
     }
 }
 
 void PageStack::onLongPress()
 {
+    if (_suppressNextInput)
+    {
+        _suppressNextInput = false;
+        return; // silently drop this input
+    }
+
+    bool wasPaused = _screenPaused;
+    activityBump();
+    if (wasPaused) return; // first press just unpauses, does not navigate
+
     if (_modal || _entered)
     {
         if (auto *p = currentPage())
@@ -41,7 +60,6 @@ void PageStack::onLongPress()
         _entered = true;
         if (auto *p = currentPage())
             p->onEnter();
-        _display.markFullRefresh(); // entering a page: hard transition
         _dirty = true;
     }
 }
@@ -58,7 +76,6 @@ void PageStack::leave()
         if (auto *p = currentPage())
             p->onLeave();
         _entered = false;
-        _display.markFullRefresh(); // leaving a page: hard transition
         _dirty = true;
     }
 }
@@ -68,7 +85,6 @@ void PageStack::goHome()
     if (_modal) { _modal->onLeave(); _modal = nullptr; }
     if (_entered) { if (auto *p = currentPage()) p->onLeave(); _entered = false; }
     _rootIdx = 0;
-    _display.markFullRefresh();
     _dirty = true;
 }
 
@@ -77,7 +93,6 @@ void PageStack::pushModal(Page *p)
     _modal = p;
     if (p)
         p->onEnter();
-    _display.markFullRefresh(); // modal overlay: hard transition
     _dirty = true;
 }
 
@@ -87,13 +102,14 @@ void PageStack::popModal()
     {
         _modal->onLeave();
         _modal = nullptr;
-        _display.markFullRefresh(); // modal dismissed: hard transition
         _dirty = true;
     }
 }
 
 void PageStack::renderIfDirty()
 {
+    if (_screenPaused)
+        return; // preserve _dirty so we render immediately on unpause
     if (!_dirty)
         return;
     _dirty = false;
@@ -113,7 +129,7 @@ void PageStack::renderIfDirty()
 
 void PageStack::checkAutoRefresh()
 {
-    if (_dirty)
+    if (_screenPaused || _dirty)
         return;
     Page *p = currentPage();
     if (!p)
@@ -127,4 +143,42 @@ void PageStack::checkAutoRefresh()
         best = _globalRefreshMs;
     if (best > 0 && millis() - _lastRenderMs >= best)
         requestRender();
+}
+
+void PageStack::setPauseTimeout(uint32_t ms)
+{
+    _pauseTimeoutMs = ms;
+    _lastActivityMs = millis(); // start the idle clock from now
+}
+
+void PageStack::setScreenPaused(bool v)
+{
+    if (v == _screenPaused)
+        return;
+    if (v)
+    {
+        headerSetCustomText("PAUSED");
+        // Render "PAUSED" header while _screenPaused is still false so
+        // renderIfDirty() doesn't bail, then lock the display.
+        _dirty = true;
+        renderIfDirty();
+        _screenPaused = true;
+        Serial.println("[PageStack] screen paused");
+    }
+    else
+    {
+        _screenPaused = false;
+        suppressNextInput(); // don't navigate on the wakeup press
+        headerSetCustomText(nullptr);
+        // Waking up — e-ink may have ghosted; force a clean full refresh.
+        _display.markFullRefresh();
+        requestRender();
+        Serial.println("[PageStack] screen unpaused");
+    }
+}
+
+void PageStack::activityBump()
+{
+    _lastActivityMs = millis();
+    setScreenPaused(false); // no-op if already active
 }

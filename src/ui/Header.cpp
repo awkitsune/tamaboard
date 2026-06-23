@@ -2,14 +2,15 @@
 #include "Icons.h"
 #include "../io/Clock.h"
 #include "../io/Battery.h"
+#include <cstdio>
 
 static bool s_locked = false;
 static bool s_airplaneMode = false;
-static bool s_sleeping;
+static const char* s_customText = nullptr;
 
 void headerSetLocked(bool v)      { s_locked = v; }
 void headerSetAirplaneMode(bool v) { s_airplaneMode = v; }
-void headerSetSleeping(bool v)     { s_sleeping = v; }
+void headerSetCustomText(const char* txt) { s_customText = txt; }
 
 static void drawBattery(Canvas &c, int x, int y, uint8_t pct)
 {
@@ -41,16 +42,18 @@ int drawHeader(Canvas &c, const char *title, bool entered)
     c.setCursor(2, 1);
     c.print(title);
 
-    if (s_sleeping)
+    char hhmm[6];
+    Clock::format(hhmm, sizeof(hhmm));
+    if (s_customText)
     {
-        const char *txt = "SLEEP";
-        c.setCursor(c.width() / 2 - c.textWidth(txt) / 2, 1);
-        c.print(txt);
+        // Show custom text | clock, centered
+        char buf[32];
+        snprintf(buf, sizeof(buf), "%s | %s", s_customText, hhmm);
+        c.setCursor(c.width() / 2 - c.textWidth(buf) / 2, 1);
+        c.print(buf);
     }
     else
     {
-        char hhmm[6];
-        Clock::format(hhmm, sizeof(hhmm));
         c.setCursor(c.width() / 2 - c.textWidth(hhmm) / 2, 1);
         c.print(hhmm);
     }

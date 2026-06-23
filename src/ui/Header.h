@@ -4,7 +4,7 @@
 // Status flags drawn as icons to the left of the battery in the header.
 void headerSetLocked(bool v);
 void headerSetAirplaneMode(bool v);
-void headerSetSleeping(bool v);
+void headerSetCustomText(const char* txt);  // set to nullptr to clear
 
 // Draws a one-line header at the top of the screen and returns the y-offset where
 // page content can start.
