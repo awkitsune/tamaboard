@@ -12,17 +12,6 @@ void headerSetLocked(bool v)      { s_locked = v; }
 void headerSetAirplaneMode(bool v) { s_airplaneMode = v; }
 void headerSetCustomText(const char* txt) { s_customText = txt; }
 
-static void drawBattery(Canvas &c, int x, int y, uint8_t pct)
-{
-    // 14x6 battery: 1px outline, 2px nub, 4 fill cells.
-    c.fillRect(x, y, 12, 6, true);
-    c.fillRect(x + 1, y + 1, 10, 4, false);
-    c.fillRect(x + 12, y + 2, 2, 2, true);
-    int cells = (pct + 24) / 25; // 0..4
-    for (int i = 0; i < cells; i++)
-        c.fillRect(x + 1 + i * 3, y + 1, 2, 4, true);
-}
-
 int drawHeader(Canvas &c, const char *title, bool entered)
 {
     c.setTextSize(1);
@@ -58,8 +47,12 @@ int drawHeader(Canvas &c, const char *title, bool entered)
         c.print(hhmm);
     }
 
-    drawBattery(c, c.width() - 16, 1, Battery::percent());
-    int iconX = c.width() - 16 - 2;
+    char bat[6];
+    snprintf(bat, sizeof(bat), "%u%%", Battery::percent());
+    int batW = c.textWidth(bat);
+    c.setCursor(c.width() - batW - 1, 1);
+    c.print(bat);
+    int iconX = c.width() - batW - 3;
     if (s_locked)
     {
         iconX -= ICON_LOCK_W;
