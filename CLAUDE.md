@@ -128,9 +128,9 @@ project-tama/
 ├── data/
 │   └── index.html   # companion web UI (WebSocket, touchpad + key grid)
 └── src/
-    ├── main.cpp           # setup/loop, side-effect runner, debug provider
+    ├── main.cpp           # setup/loop, uiTask, side-effect runner
     ├── Input.h            # InputEvent struct (KEY/MOVE/CLICK)
-    ├── AppContext.h       # bundle: fsm/ble/slots/ctrl/nav refs handed to pages
+    ├── AppContext.h       # bundle: fsm/ble/slots/ctrl/nav/led refs handed to pages
     ├── app/
     │   └── Controller.cpp/.h   # single command sink; pages + WS both go through it
     ├── pet/
@@ -141,31 +141,37 @@ project-tama/
     │   ├── UsbHid.cpp/.h   # stub (GPIO19/20 not wired)
     │   └── BleHid.cpp/.h   # NimBLE HID-over-GATT + 3-slot host switcher
     ├── io/
-    │   ├── Button.cpp/.h       # single user button: short/long press + ext0 wake
-    │   ├── DeviceSlots.cpp/.h  # 3 BLE host slots, persisted in NVS ("slots" ns)
-    │   ├── PetStore.cpp/.h     # pet stat persistence in NVS ("pet" ns)
-    │   ├── EventLog.cpp/.h     # ring buffer of recent game events
+    │   ├── Button.cpp/.h       # ISR → queue → debounce task (Core 0, prio 5, 8 KB)
     │   ├── Battery.cpp/.h      # ADC % (GPIO20 via GPIO19 gate)
-    │   └── Clock.cpp/.h        # HH:MM (companion-synced; uptime fallback)
+    │   ├── Clock.cpp/.h        # HH:MM (companion-synced; uptime fallback)
+    │   ├── DeviceSlots.cpp/.h  # 3 BLE host slots, persisted in NVS ("slots" ns)
+    │   ├── Led.cpp/.h          # onboard LED blinker (GPIO18, Routine subclass)
+    │   ├── PetStore.cpp/.h     # pet stat persistence in NVS ("pet" ns)
+    │   └── Settings.cpp/.h     # user preferences in NVS ("settings" ns)
     ├── net/
+    │   ├── DebugPage.cpp/.h        # /debug HTML builder
     │   ├── WebUI.cpp/.h            # HTTP server + WS dispatch → Controller
     │   └── StateBroadcaster.cpp/.h # JSON push to all WS clients
+    ├── routine/
+    │   ├── Routine.h               # abstract base: tick() + intervalMs()
+    │   ├── RoutineManager.h/.cpp   # calls each routine at its interval from loop()
+    │   └── BatteryRoutine.h/.cpp   # 60 s: Battery::sample() + pushState()
     └── ui/
         ├── Canvas.h              # mono drawing surface interface
         ├── Display.h
         ├── EinkDisplay.cpp/.h    # heltec-eink-modules backend
-        ├── Header.cpp/.h         # 10px header: title + clock + battery + icons
+        ├── Header.cpp/.h         # 10px header: custom text | clock, battery %, icons
         ├── ListView.cpp/.h       # vertical list, selection = inversion-highlight
         ├── Icons.cpp/.h          # 8x8 XBM glyphs (BT, lock, heart…)
         ├── Page.h
-        ├── PageStack.cpp/.h      # carousel of root pages, Meshtastic-style nav
+        ├── PageStack.cpp/.h      # dual-core carousel nav (Core 0 nav / Core 1 render)
         └── pages/
             ├── HomePage.cpp/.h         # pet face + stat bars
             ├── CarePage.cpp/.h         # Feed / Play / Sleep (modal, owned by HomePage)
             ├── KeyboardPage.cpp/.h     # 3 host slots + BLE toggle + Back
             ├── SlotActionPage.cpp/.h   # modal: Pair / Connect / Forget per slot
             ├── PairingPage.cpp/.h      # modal: 6-digit BT PIN display
-            └── SettingsPage.cpp/.h     # airplane mode toggle
+            └── SettingsPage.cpp/.h     # airplane mode + LED enable
 ```
 
 ## Interaction model (device-native)
@@ -180,6 +186,8 @@ The board is fully usable on its own through one button:
 - **Short press inside a page**: advance the page's list selection.
 - **Long press inside a page**: execute the selected action (or close a modal).
 - **Long press on Back item**: leaves to root carousel (header returns to normal).
+- **Screen auto-pauses** after 30 s of inactivity — first button press unpauses without
+  navigating. Header shows `PAUSED | HH:MM` while paused.
 - Reset is hardware-only.
 
 `CarePage` is **not** a root page — it is owned by `HomePage` as a private member and
@@ -227,9 +235,9 @@ change. There is no REST and no polling.
 ## Architecture (detailed)
 
 ```
-                ┌────── PageStack (on-device UI) ──────┐
-                │                                       │
-                ▼                                       ▼
+                ┌────── PageStack (Core 1 — UI task) ──────┐
+                │                                           │
+                ▼                                           ▼
             Pages (Home, Care, KB, Settings)    ──reads── PetFSM, BleHid, slots
                 │
                 ▼
@@ -253,13 +261,22 @@ change. There is no REST and no polling.
             └────────┘
 ```
 
+### Task layout
+
+| Task | Core | Priority | Description |
+|------|------|----------|-------------|
+| `loopTask` (Arduino `loop()`) | 0 | 1 | FSM tick, routines, auto-pause check |
+| `buttonTask` | 0 | 5 | ISR → queue → debounce → nav callbacks |
+| `uiTask` | 1 | 3 | Blocks on semaphore, renders when dirty |
+| AsyncWebServer / NimBLE | 0 | internal | Network I/O |
+
 ### SOLID alignment
 - **SRP** — each module owns one thing: `PetFSM` (pet stats + transitions only),
   `Controller` (verbs), `StateBroadcaster` (JSON push), `WebUI` (server+WS plumbing),
   `EinkDisplay` (panel I/O), pages (one screen each).
 - **OCP** — adding a new page = subclass `Page`. New display = implement `Display`+
   `Canvas`. New NVS domain = new `XxxStore` module. New broadcast field = touch one
-  builder in `StateBroadcaster`.
+  builder in `StateBroadcaster`. New background task = subclass `Routine`.
 - **LSP** — `BleHid`/`UsbHid` both honor `HidBackend`; `EinkDisplay` honors `Display`.
 - **ISP** — `HidBackend` is intentionally minimal (no slot ops; those live on
   `BleHid` only, since "switch host" has no meaning for USB).
@@ -303,11 +320,13 @@ download mode manually (hold **PRG**, tap **RST**, release **PRG**) and run
 
 ## Hardware-specific pin notes
 
+- **Onboard LED** on `GPIO18` (active-HIGH, `LED_BUILTIN`). Driven by the `Led` routine.
+  Confirmed by heltec-eink-modules platform header and Meshtastic's variant.h.
 - **Battery sensing** (matches Meshtastic's Wireless Paper variant):
   - `BATTERY_PIN = GPIO20` (ADC2 channel, ~1:1 divider)
-  - `ADC_CTRL = GPIO19` (active-**low** gate — pull LOW to enable divider, HIGH to disable; P-FET, confirmed by Meshtastic and serial log)
+  - `ADC_CTRL = GPIO19` (active-**low** gate — pull LOW to enable divider, HIGH to disable; P-FET)
   - ADC2 reads can be unreliable while WiFi/BT radios are active on ESP32-S3.
-    Sample infrequently (`Battery::sample()` runs every 60s in `loop()`).
+    Sample infrequently (`BatteryRoutine` fires every 60 s).
 - **PRG button** on `GPIO0` (active-low, internal pull-up). Configured as ext0 wake
   source so a press wakes the board from light sleep in the SLEEP/lock state.
 - **Vext** on `GPIO45` (active-low). heltec-eink-modules manages this internally.
@@ -324,14 +343,49 @@ change.
 `fillRect`, `drawBitmap`, and `hline` calls (white-on-black). Used by `Header` to
 render the fully inverted header bar when the user is inside a page.
 
+## Header
+
+The 10 px header bar shows:
+- **Left:** page title (or inverted when inside a page), lock icon on SLEEP.
+- **Center:** `TEXT | HH:MM` when `headerSetCustomText("TEXT")` is set (e.g. `"SLEEP"`,
+  `"PAUSED"`); otherwise just `HH:MM`.
+- **Right:** battery percent (`%u%%`) + airplane/BT icons.
+
+`headerSetCustomText(nullptr)` clears the override and restores the clock-only display.
+
+## Routine framework
+
+Background tasks that need periodic ticking implement `Routine`:
+
+```cpp
+class Routine {
+public:
+    virtual void begin() {}
+    virtual void tick() = 0;
+    virtual uint32_t intervalMs() const = 0;
+};
+```
+
+`RoutineManager::add(Routine*)` calls `begin()` once, then `tick()` at `intervalMs()`
+cadence from `loop()`. Current routines:
+
+| Routine | Interval | Does |
+|---------|----------|------|
+| `Led` | 20 ms | step-sequence LED patterns (SINGLE/DOUBLE/TRIPLE/FAST) |
+| `BatteryRoutine` | 60 s | `Battery::sample()` + `StateBroadcaster::pushState()` |
+
+`Led` extends `Routine` rather than using a FreeRTOS timer — it shares the loop task
+and keeps LED timing in user-space without adding a task.
+
 ## NVS persistence convention
 
 Each module that needs persistence owns its own Preferences namespace:
 
-| Module         | Namespace  | Keys                          |
-|----------------|------------|-------------------------------|
-| `DeviceSlots`  | `"slots"`  | `active`, `occ{i}`, `name{i}`, `addr{i}` |
-| `PetStore`     | `"pet"`    | `hunger`, `mood`, `energy`, `state` |
+| Module         | Namespace    | Keys                                              |
+|----------------|--------------|---------------------------------------------------|
+| `DeviceSlots`  | `"slots"`    | `active`, `occ{i}`, `name{i}`, `addr{i}`         |
+| `PetStore`     | `"pet"`      | `hunger`, `mood`, `energy`, `state`               |
+| `Settings`     | `"settings"` | `led` (bool, default true), `airplane` (bool, default false) |
 
 Adding new keys to an existing namespace requires no migration — missing NVS keys
 return the typed default. Adding a new module: create `src/io/XxxStore.h/.cpp`,
@@ -382,6 +436,28 @@ UI scale: `UI_SCALE = 2` (Adafruit-GFX built-in 5×7 font at 2×). `lineHeight()
 Scale-1 text (`setTextSize(1)`) is 6px wide × 8px tall — used for footers and headers.
 Header height is 10px. `setInverted(true)` is Canvas-level, not display-level.
 
+## PageStack threading model
+
+`PageStack` is the dual-core boundary:
+
+- **Core 0** (button task, loop task) calls nav methods (`onShortPress`, `onLongPress`,
+  `leave`, `goHome`, `pushModal`, `popModal`) and `requestRender()`.
+- **Core 1** (`uiTask`) runs `renderIfDirty()` in a tight loop, blocking on a FreeRTOS
+  binary semaphore (`_renderSem`).
+
+Synchronization:
+
+| Resource | Mechanism |
+|----------|-----------|
+| `_dirty` | `std::atomic<bool>` (release/acquire) |
+| Nav state (`_rootIdx`, `_entered`, `_modal`) | `portMUX_TYPE _navMux` — snapshot before render, locked around mutations |
+| Render signal | FreeRTOS binary semaphore — given by `requestRender()`, taken by uiTask |
+| `_screenPaused`, `_suppressNextInput` | `volatile bool` — Core 0 writes, Core 1 reads |
+| `_lastRenderMs` | `volatile uint32_t` — Core 1 writes, Core 0 reads; one-cycle stale is fine |
+
+Sleep-entry render bypasses the semaphore: `vTaskSuspend(uiTask)` →
+`renderDirectly()` (Core 0) → sleep → wake → `vTaskResume(uiTask)`.
+
 ## Toolchain — important
 
 **Use `./bin/pio`, not Homebrew's `pio`.** The pioarduino fork of
@@ -414,7 +490,17 @@ Then `./bin/pio run` to build, `./bin/pio run -t upload` to flash, `./bin/pio ru
 - **WiFi TX power capped at 8.5 dBm** to reduce chip temperature during idle.
 - **mDNS hostname `tamaboard.local`** registered via `ESPmDNS` after `softAP()` in setup
   and after the wake-from-sleep WiFi restore. Fallback IP `192.168.4.1` unchanged.
-- **Settings page** (4th root page): airplane mode toggle (disables WiFi + BLE).
+- **Settings page** has three items: airplane mode toggle (disables WiFi + BLE on next
+  boot), LED enable/disable toggle, Back. Both settings persist in NVS (`"settings"`).
+- **Onboard LED (GPIO18)** blinks on state changes: 1× generic, 2× BLE connected,
+  3× BLE failed, rapid during pairing. Implemented as a `Routine` subclass with a
+  20 ms step-sequence tick. Can be disabled from Settings.
+- **Battery shown as percent text** (`%u%%`) right-aligned in the header — not a
+  rectangle widget.
+- **Screen auto-pause** after 30 s idle — display locks, header shows `PAUSED | HH:MM`,
+  first button press unpauses without navigating.
+- **Dual-core rendering** — `uiTask` on Core 1 owns all e-ink I/O; nav runs on Core 0.
+  Core 0 never blocks on display operations.
 
 ## Notes / conventions
 
@@ -423,5 +509,7 @@ Then `./bin/pio run` to build, `./bin/pio run -t upload` to flash, `./bin/pio ru
 - Keep `CLAUDE.md` lean; move long-form narrative to `docs/` and reference on demand.
 - TinyUSB HID and NimBLE BLE HID coexist with WiFi fine for keystroke/mouse traffic
   (light load). Memory is the real budget — keep the web bundle small.
-- The tick interval is `TICK_INTERVAL_MS = 5000` ms. Home re-render also fires every
-  5 s. Both constants live at the top of `main.cpp`.
+- The tick interval is `TICK_INTERVAL_MS = 5000` ms. Home re-render fires every 5 s
+  via `Page::autoRefreshMs()` override. The constant lives at the top of `main.cpp`.
+- The companion web UI auto-syncs the clock on every WebSocket connect (`syncClock()`
+  in `ws.onopen`) — no NTP needed.

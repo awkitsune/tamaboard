@@ -52,8 +52,16 @@ static Controller *controllerPtr = nullptr;
 static StateBroadcaster *broadcasterPtr = nullptr;
 static PairingPage pairing;
 
+static TaskHandle_t s_uiTaskHandle = nullptr;
+
 static uint32_t lastTick = 0;
-static int saveTick = 0;
+static int saveTick      = 0;
+
+static void uiTask(void *) {
+  Serial.println("[ui] task started on core 1");
+  for (;;)
+    pageStackPtr->renderIfDirty();
+}
 
 static void startWiFiAP() {
   WiFi.softAP(AP_SSID, AP_PASS);
@@ -108,11 +116,14 @@ static void onFsmStateChange(State s) {
     if (bleHid.isActive())
       bleHid.end();
     WiFi.mode(WIFI_OFF);
-    // WiFi.mode() yields internally — loopTask may have consumed _dirty by now.
-    // Re-mark dirty immediately before renderIfDirty() so there is no yield
-    // opportunity between the two calls and loopTask cannot steal this render.
-    pageStackPtr->requestRender();
-    pageStackPtr->renderIfDirty();
+    // Suspend the UI task so Core 0 owns the display exclusively for the
+    // sleep-entry render. Guard against nullptr: fsm.begin() fires the state
+    // callback before setup() creates the UI task, so if the device reboots
+    // while in SLEEP state we arrive here with s_uiTaskHandle == nullptr.
+    // vTaskSuspend(nullptr) would suspend the calling task (loopTask during
+    // setup), hanging the device — skip it instead.
+    if (s_uiTaskHandle) vTaskSuspend(s_uiTaskHandle);
+    pageStackPtr->renderDirectly();
     petStore.save(fsm.pet(), State::SLEEP);
     Serial.println("[sleep] sleeping...");
     uint32_t sleepStart = millis();
@@ -136,10 +147,9 @@ static void onFsmStateChange(State s) {
       Serial.println("[sleep] airplane mode active — WiFi stays off");
     Serial.println("[sleep] transitioning to IDLE");
     controllerPtr->transitionState(State::IDLE);
-    petStore.save(fsm.pet(),
-                  State::IDLE); // persist IDLE immediately so a crash here
-                                // doesn't reboot into SLEEP
-    enableLoopWDT();            // re-subscribe after all slow wake ops complete
+    petStore.save(fsm.pet(), State::IDLE); // persist immediately so a crash here doesn't reboot into SLEEP
+    if (s_uiTaskHandle) vTaskResume(s_uiTaskHandle); // UI task renders the IDLE state triggered by transitionState above
+    enableLoopWDT();                       // re-subscribe after all slow wake ops complete
   }
 }
 
@@ -223,11 +233,17 @@ void setup() {
       broadcasterPtr->pushPairing(pk);
   });
 
+  // AsyncWebServer/AsyncTCP needs the lwIP TCP/IP core initialised before
+  // webUI.begin() calls AsyncServer::begin() → tcpip_api_call(). That init
+  // happens inside WiFi.softAP(). Always start the AP first; tear it down
+  // afterwards if airplane mode is active.
+  startWiFiAP();
+
   if (Settings::airplaneMode()) {
     controller.setAirplaneMode(true);
     headerSetAirplaneMode(true);
-  } else {
-    startWiFiAP();
+    WiFi.mode(WIFI_OFF);
+    Serial.println("[main] airplane mode — WiFi off");
   }
 
   webUI.setDebugProvider(
@@ -241,7 +257,9 @@ void setup() {
 
   webUI.begin(controller, broadcaster);
   fsm.begin(petStore.pet(), petStore.state());
-  pageStackPtr->renderIfDirty();
+  // fsm.begin() → onFsmStateChange → requestRender() deposits one semaphore
+  // token. Create the UI task last so it picks that token up immediately.
+  xTaskCreatePinnedToCore(uiTask, "ui", 6144, nullptr, 3, &s_uiTaskHandle, 1);
   Serial.println("[main] setup complete");
   lastTick = millis();
 }
@@ -264,6 +282,5 @@ void loop() {
 
   routines.tick();
   pageStackPtr->checkAutoRefresh();
-  pageStackPtr->renderIfDirty();
-  delay(20);
+  vTaskDelay(pdMS_TO_TICKS(20));
 }
